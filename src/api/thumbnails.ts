@@ -6,37 +6,6 @@ import type { BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError, UserNotAuthenticatedError } from "./errors";
 import { createTextSpanFromBounds } from "typescript";
 
-type Thumbnail = {
-  data: ArrayBuffer;
-  mediaType: string;
-};
-
-const videoThumbnails: Map<string, Thumbnail> = new Map();
-
-export async function handlerGetThumbnail(cfg: ApiConfig, req: BunRequest) {
-  const { videoId } = req.params as { videoId?: string };
-  if (!videoId) {
-    throw new BadRequestError("Invalid video ID");
-  }
-
-  const video = getVideo(cfg.db, videoId);
-  if (!video) {
-    throw new NotFoundError("Couldn't find video");
-  }
-
-  const thumbnail = videoThumbnails.get(videoId);
-  if (!thumbnail) {
-    throw new NotFoundError("Thumbnail not found");
-  }
-
-  return new Response(thumbnail.data, {
-    headers: {
-      "Content-Type": thumbnail.mediaType,
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
 export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   const { videoId } = req.params as { videoId?: string };
   if (!videoId) {
@@ -65,19 +34,18 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
 
   const arrBuff = await file.arrayBuffer();
 
+  const buf = Buffer.from(arrBuff)
+
+  const base64 = buf.toString("base64")
+
+  const dataUrl = `data:${fileType};base64,${base64}`
+
   const videoMetadata = getVideo(cfg.db, videoId)
   if (userID !== videoMetadata?.userID) {
     throw new UserForbiddenError("Not the video owner")
   }
 
-  videoThumbnails.set(videoId, {
-    data: arrBuff,
-    mediaType: fileType
-  })
-
-  const thumbnailURL = `http://localhost:${cfg.port}/api/thumbnails/${videoId}`;
-
-  videoMetadata.thumbnailURL = thumbnailURL
+  videoMetadata.thumbnailURL = dataUrl
   if (!videoMetadata) {
     throw new NotFoundError("Video not found")
   }
