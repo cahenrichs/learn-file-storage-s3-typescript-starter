@@ -5,6 +5,7 @@ import type { ApiConfig } from "../config";
 import type { BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError, UserNotAuthenticatedError } from "./errors";
 import { createTextSpanFromBounds } from "typescript";
+import { mediaTypeToExt, getAssetDiskPath, getAssetURL } from "./assets";
 
 export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   const { videoId } = req.params as { videoId?: string };
@@ -30,25 +31,27 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
     throw new BadRequestError("File is too large")
   }
 
-  const fileType = file.type
 
-  const arrBuff = await file.arrayBuffer();
+ const mediaType = file.type;
 
-  const buf = Buffer.from(arrBuff)
+ const ext = mediaTypeToExt(mediaType)
 
-  const base64 = buf.toString("base64")
+ const filename = videoId + ext
 
-  const dataUrl = `data:${fileType};base64,${base64}`
+ const path = getAssetDiskPath(cfg, filename)
+ await Bun.write(path, file)
+ const url = getAssetURL(cfg, filename)
 
   const videoMetadata = getVideo(cfg.db, videoId)
+  if (!videoMetadata) {
+    throw new NotFoundError("Video not found")
+  }
   if (userID !== videoMetadata?.userID) {
     throw new UserForbiddenError("Not the video owner")
   }
 
-  videoMetadata.thumbnailURL = dataUrl
-  if (!videoMetadata) {
-    throw new NotFoundError("Video not found")
-  }
+  videoMetadata.thumbnailURL = url
+  
   const updatedProfile = await updateVideo(cfg.db, videoMetadata)
 
   return respondWithJSON(200, videoMetadata);
