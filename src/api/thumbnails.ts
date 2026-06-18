@@ -5,7 +5,7 @@ import type { ApiConfig } from "../config";
 import type { BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError, UserNotAuthenticatedError } from "./errors";
 import { createTextSpanFromBounds } from "typescript";
-import { mediaTypeToExt, getAssetDiskPath, getAssetURL } from "./assets";
+import { mediaTypeToExt, getAssetDiskPath, getAssetURL, getAssetPath } from "./assets";
 
 export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   const { videoId } = req.params as { videoId?: string };
@@ -36,11 +36,10 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
  if (mediaType !== "image/jpeg" && mediaType !== "image/png") {
     throw new BadRequestError("Invalid file type. Only JPEG or PNG allowed.");
  }
- const ext = mediaTypeToExt(mediaType)
 
- const filename = videoId + ext
+const filename = getAssetPath(mediaType)
+const path = getAssetDiskPath(cfg, filename)
 
- const path = getAssetDiskPath(cfg, filename)
  await Bun.write(path, file)
  const url = getAssetURL(cfg, filename)
 
