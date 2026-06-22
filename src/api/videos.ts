@@ -34,6 +34,10 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 
  const tempPath = path.join("/tmp", `${videoId}.mp4`)
 
+ await Bun.write(tempPath, file)
+
+ const aspectRatio = await getVideoaspectRatio(tempPath)
+
  const videoMetadata = getVideo(cfg.db, videoId)
    if (!videoMetadata) {
      throw new NotFoundError("Video not found")
@@ -42,9 +46,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
      throw new UserForbiddenError("Not the video owner")
    }
 
-  await Bun.write(tempPath, file)
-
-  const key = `${videoId}.mp4`
+  const key = `${aspectRatio}/${videoId}.mp4`
 
   const s3File = cfg.s3Client.file(key)
   await s3File.write(Bun.file(tempPath), {type: "video/mp4" })
@@ -54,4 +56,38 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   updateVideo(cfg.db, videoMetadata)
 
   return respondWithJSON(200, null);
+}
+
+export async function getVideoaspectRatio(filePath: string) {
+  const proc = Bun.spawn([
+    "ffprobe",
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=width,height","-of",
+    "json",
+    filePath
+  ], {
+  stdout: "pipe",
+  stderr: "pipe",
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+
+const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    throw new Error(`ffporbe error: ${stderr}`);
+  }
+
+  const data = JSON.parse(stdout)
+  const { width, height } = data.streams[0];
+  if(Math.floor(width / height * 9) === 16) {
+    return "landscape"
+  } else if (Math.floor(width / height * 16) === 9) {
+    return "portrait";
+  } else {
+    return "other"
+  }
 }
