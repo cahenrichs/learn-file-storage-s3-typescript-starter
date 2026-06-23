@@ -6,6 +6,8 @@ import { getBearerToken, validateJWT } from "../auth";
 import { getVideo } from "../db/videos";
 import path from "path";
 import { updateVideo } from "../db/videos";
+import { uploadVideoToS3 } from "../s3";
+import { rm } from "fs/promises";
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
    const { videoId } = req.params as { videoId?: string };
@@ -32,9 +34,11 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
       throw new BadRequestError("Invalid file type. Only video or mp4 allowed.");
  }
 
+
  const tempPath = path.join("/tmp", `${videoId}.mp4`)
 
  await Bun.write(tempPath, file)
+ const fastPath = await processVideoForFastStart(tempPath)
 
  const aspectRatio = await getVideoaspectRatio(tempPath)
 
@@ -48,14 +52,16 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 
   const key = `${aspectRatio}/${videoId}.mp4`
 
-  const s3File = cfg.s3Client.file(key)
-  await s3File.write(Bun.file(tempPath), {type: "video/mp4" })
+  const upload = await uploadVideoToS3(cfg, key, fastPath, "video/mp4")
 
   const newVidUrl = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${key}`
   videoMetadata.videoURL = newVidUrl
   updateVideo(cfg.db, videoMetadata)
 
-  return respondWithJSON(200, null);
+ await rm(tempPath, { force: true });
+ await rm(fastPath, { force: true });
+
+  return respondWithJSON(200, videoMetadata);
 }
 
 export async function getVideoaspectRatio(filePath: string) {
@@ -82,7 +88,12 @@ const exitCode = await proc.exited;
   }
 
   const data = JSON.parse(stdout)
+  if (!data.streams || data.streams.length === 0) {
+    throw new Error("No video streams found");
+  }
+
   const { width, height } = data.streams[0];
+
   if(Math.floor(width / height * 9) === 16) {
     return "landscape"
   } else if (Math.floor(width / height * 16) === 9) {
@@ -90,4 +101,27 @@ const exitCode = await proc.exited;
   } else {
     return "other"
   }
+}
+
+export async function processVideoForFastStart(inputFilePath: string) {
+  const outputFile = `${inputFilePath}.processed.mp4`
+  const proc = Bun.spawn([
+    "ffmpeg",
+    "-i",
+    inputFilePath,
+    "-movflags",
+    "faststart",
+    "-map_metadata",
+    "0",
+    "-codec",
+    "copy",
+    "-f",
+    "mp4",
+    outputFile,
+  ], {
+  stderr: "pipe",
+  });
+
+  await proc.exited;
+  return outputFile
 }
